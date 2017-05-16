@@ -41,6 +41,18 @@ double C1(double x, double y, double Z) {
     return exp(x + y + Z);
 }
 
+bool calculationsNeeded(int igl1, int igl2, int igl3, int igl4,
+                        int rit, int Nx, int Ny, int Nz,
+                        int r1, int r2, int r3, int r4) {
+    for (int i1 = igl1 * r1 + 1; i1 < min((igl1 + 1) * r1 + 1, rit + 1); ++i1) {
+        if (max(0, i1 - igl2 * r2) < min(r2, i1 + Nx - igl2 * r2)
+            && max(igl3 * r3, i1) < min((igl3 + 1) * r3, i1 + Ny)
+            && max(igl4 * r4, i1) < min((igl4 + 1) * r4, i1 + Nz)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 int main(int argc, char* argv[]) {
     int rank, size;
@@ -54,14 +66,14 @@ int main(int argc, char* argv[]) {
     start = MPI_Wtime();
 
     // Vichislenie osnovnih parametrov oblasti reshenija
-    int rit = 100, tag = 1000;
+    int rit = 300, tag = 1000;
     double h1 = 0.01, h2 = 0.01, h3 = 0.01;
     double X = 1, Y = 1, Z = 1;
     double w = 1.7;
 
     int Nx = (int)(X / h1) - 1, Ny = (int)(Y / h2) - 1, Nz = (int)(Z / h3) - 1;
 
-    int r1 = 10, r3 = 40, r4 = 10;
+    int r1 = 10, r3 = 20, r4 = 20;
     int Q1 = (int)ceil((double)rit / r1);
     int Q3 = (int)ceil((double)(rit + Ny) / r3);
     int Q4 = (int)ceil((double)(rit + Nz) / r4);
@@ -70,19 +82,18 @@ int main(int argc, char* argv[]) {
     int r2 = (int)ceil((double)(rit + Nx) / Q2);
 
     double *U = (double *)calloc((size_t)(r1 + 1) * r2 * r3 * Q3 * r4 * Q4, sizeof(double));
-    double *buffU = (double *)calloc((size_t)r1 * r2 * r3 * r4, sizeof(double));
     double *preLeft = (double *)calloc((size_t)(r1 + 1) * r3 * Q3 * r4 * Q4, sizeof(double));
-    double *buffPreLeft = (double *)calloc((size_t)r1 * r3 * r4, sizeof(double));
 
     int igl2 = rank;
     int left = rank - 1;
     int right = (size - 1 == rank) ? -1 : rank + 1;
 
     MPI_Status status;
-    MPI_Request request_left = MPI_REQUEST_NULL, request_right = MPI_REQUEST_NULL;
 
     MPI_Datatype ujk_t;
-    MPI_Type_vector(r1, r3 * r4, r2 * r3 * r4, MPI_DOUBLE, &ujk_t);
+    MPI_Type_vector(r3, r4, r4 * Q4, MPI_DOUBLE, &ujk_t);
+    MPI_Type_commit(&ujk_t);
+    MPI_Type_create_resized(ujk_t, 0, sizeof(double) * r2 * r3 * Q3 * r4 * Q4, &ujk_t);
     MPI_Type_commit(&ujk_t);
 
     MPI_Datatype  prejk_t;
@@ -91,50 +102,25 @@ int main(int argc, char* argv[]) {
     MPI_Type_create_resized(prejk_t, 0, sizeof(double) * r3 * Q3 * r4 * Q4, &prejk_t);
     MPI_Type_commit(&prejk_t);
 
-    bool leftRecved = false;
-
     for (int igl1 = 0; igl1 < Q1; ++igl1) {
         for (int igl3 = 0; igl3 < Q3; ++igl3) {
             for (int igl4 = 0; igl4 < Q4; ++igl4) {
-                int igl1_n, igl3_n, igl4_n;
-                if (igl4 == Q4 - 1) {
-                    igl4_n = 0;
-                    if (igl3 == Q3 - 1) {
-                        igl3_n = 0;
-                        if (igl1 == Q1 - 1) {
-                            igl1_n = -1;
-                        } else {
-                            igl1_n = igl1 + 1;
-                        }
-                    } else {
-                        igl3_n = igl3 + 1;
-                        igl1_n = igl1;
-                    }
-                } else {
-                    igl4_n = igl4 + 1;
-                    igl3_n = igl3;
-                    igl1_n = igl1;
-                }
-
-                bool next = (igl1_n != -1);
-
                 if (left != -1) {
-                    if (!leftRecved) {
+                    bool leftRecvNeeded = calculationsNeeded(igl1, left, igl3, igl4,
+                                                             rit, Nx, Ny, Nz, r1, r2, r3, r4);
+                    if (leftRecvNeeded) {
                         MPI_Recv(preLeft + ((Q3 + igl3) * r3 * Q4 + igl4) * r4, r1, prejk_t,
                                  left, tag * igl1 + igl4, MPI_COMM_WORLD, &status);
-                        leftRecved = true;
-                    }
-                    if (next) {
-                        MPI_Irecv(buffPreLeft, r1 * r3 * r4, MPI_DOUBLE,
-                                  left, tag * igl1_n + igl4_n, MPI_COMM_WORLD, &request_left);
                     }
                 }
 
 //                printf("%d enters tile %d %d %d\n", rank, igl1, igl3, igl4);
+                bool sendNeeded = false;
                 for (int i1 = igl1 * r1 + 1, ii1 = 1; i1 < min((igl1 + 1) * r1 + 1, rit + 1); ++i1, ++ii1) {
                     for (int i2 = max(0, i1 - igl2 * r2); i2 < min(r2, i1 + Nx - igl2 * r2); ++i2) {
                         for (int i3 = max(igl3 * r3, i1); i3 < min((igl3 + 1) * r3, i1 + Ny); ++i3) {
                             for (int i4 = max(igl4 * r4, i1); i4 < min((igl4 + 1) * r4, i1 + Nz); ++i4) {
+                                sendNeeded = true;
 
                                 double uip, uim, ujp, ujm, ukp, ukm, u;
                                 int i = igl2 * r2 + i2 - i1, j = i3 - i1, k = i4 - i1;
@@ -152,7 +138,6 @@ int main(int argc, char* argv[]) {
                                 } else {
                                     uip = U[(((ii1 - 1) * r2 + i2) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4 - 1];
                                 }
-
 
                                 if (j == 0) {
                                     ujm = B0((i + 1) * h1, (k + 1) * h3);
@@ -201,53 +186,18 @@ int main(int argc, char* argv[]) {
                 }
 //                printf("%d leaves tile %d %d %d\n", rank, igl1, igl3, igl4);
 
-                if (right != -1) {
-                    MPI_Wait(&request_right, &status);
-
-                    for (int l = 0; l < r1; ++l) {
-                        for (int i = 0; i < r2; ++i) {
-                            for (int j = 0; j < r3; ++j) {
-                                for (int k = 0; k < r4; ++k) {
-                                    buffU[((l * r2 + i) * r3 + j) * r4 + k]
-                                            = U[(((((l + 1) * r2 + i) * Q3 + igl3) * r3 + j) * Q4 + igl4) * r4 + k];
-                                }
-                            }
-                        }
-                    }
-
-                    MPI_Isend(buffU + (r2 - 1) * r3 * r4, 1, ujk_t,
-                              right, tag * igl1 + igl4, MPI_COMM_WORLD, &request_right);
-                }
-
-                if (left != -1 && next) {
-                    MPI_Wait(&request_left, &status);
-                    for (int l = 0; l < r1; ++l) {
-                        for (int j = 0; j < r3; ++j) {
-                            for (int k = 0; k < r4; ++k) {
-                                preLeft[((((l + 1) * Q3 + igl3) * r3 + j) * Q4 + igl4_n) * r4 + k]
-                                        = buffPreLeft[(l * r3 + j) * r4 + k];
-                            }
-                        }
-                    }
+                if (sendNeeded && right != -1) {
+                    MPI_Send(U + (((2 * r2 - 1) * Q3 + igl3) * r3 * Q4 + igl4) * r4, r1, ujk_t,
+                             right, tag * igl1 + igl4, MPI_COMM_WORLD);
                 }
             }
         }
 
         if (igl1 != Q1 - 1) {
-            for (int i = 0; i < r2; ++i) {
-                for (int j = 0; j < r3 * Q3; ++j) {
-                    for (int k = 0; k < r4 * Q4; ++k) {
-                        U[(i * r3 * Q3 + j) * r4 * Q4 + k] = U[((r1 * r2 + i) * r3 * Q3 + j) * r4 * Q4 + k];
-                        if (i == 0) {
-                            preLeft[j * r4 * Q4 + k] = preLeft[(r1 * r3 * Q3 + j) * r4 * Q4 + k];
-                        }
-                    }
-                }
-            }
+            memcpy(U, U + r1 * r2 * r3 * Q3 * r4 * Q4, r2 * r3 * Q3 * r4 * Q4 * sizeof(double));
+            memcpy(preLeft, preLeft + r1 * r3 * Q3 * r4 * Q4, r3 * Q3 * r4 * Q4 * sizeof(double));
         }
     }
-
-    MPI_Wait(&request_right, &status);
 
     double *R;
     if (rank == 0) {
