@@ -41,17 +41,8 @@ double C1(double x, double y, double Z) {
     return exp(x + y + Z);
 }
 
-bool calculationsNeeded(int igl1, int igl2, int igl3, int igl4,
-                        int rit, int Nx, int Ny, int Nz,
-                        int r1, int r2, int r3, int r4) {
-    for (int i1 = igl1 * r1 + 1; i1 < min((igl1 + 1) * r1 + 1, rit + 1); ++i1) {
-        if (max(0, i1 - igl2 * r2) < min(r2, i1 + Nx - igl2 * r2)
-            && max(igl3 * r3, i1) < min((igl3 + 1) * r3, i1 + Ny)
-            && max(igl4 * r4, i1) < min((igl4 + 1) * r4, i1 + Nz)) {
-            return true;
-        }
-    }
-    return false;
+bool calculationsNeeded(int m, int igl1, int Nx, int r1) {
+    return max(0, m - igl1 * r1) < min(r1, m + Nx - igl1 * r1);
 }
 
 int main(int argc, char* argv[]) {
@@ -66,154 +57,137 @@ int main(int argc, char* argv[]) {
     start = MPI_Wtime();
 
     // Vichislenie osnovnih parametrov oblasti reshenija
-    int rit = 300, tag = 1000;
+    int rit = 600, tag = 31;
     double h1 = 0.01, h2 = 0.01, h3 = 0.01;
     double X = 1, Y = 1, Z = 1;
     double w = 1.7;
 
     int Nx = (int)(X / h1) - 1, Ny = (int)(Y / h2) - 1, Nz = (int)(Z / h3) - 1;
 
-    int r1 = 10, r3 = 20, r4 = 20;
-    int Q1 = (int)ceil((double)rit / r1);
-    int Q3 = (int)ceil((double)(rit + Ny) / r3);
-    int Q4 = (int)ceil((double)(rit + Nz) / r4);
+    int r2 = 20, r3 = 20;
+    int Q2 = (int)ceil((double)Ny / r2);
+    int Q3 = (int)ceil((double)Nz / r3);
 
-    int Q2 = size;
-    int r2 = (int)ceil((double)(rit + Nx) / Q2);
+    int Q1 = size;
+    int r1 = (int)ceil((double)(rit + Nx) / Q1);
 
-    double *U = (double *)calloc((size_t)(r1 + 1) * r2 * r3 * Q3 * r4 * Q4, sizeof(double));
-    double *preLeft = (double *)calloc((size_t)(r1 + 1) * r3 * Q3 * r4 * Q4, sizeof(double));
+    double *U = (double *)calloc((size_t)2 * r1 * r2 * Q2 * r3 * Q3, sizeof(double));
+    double *preLeft = (double *)calloc((size_t)2 * r2 * Q2 * r3 * Q3, sizeof(double));
 
-    int igl2 = rank;
+    int igl1 = rank;
     int left = rank - 1;
     int right = (size - 1 == rank) ? -1 : rank + 1;
 
     MPI_Status status;
 
     MPI_Datatype ujk_t;
-    MPI_Type_vector(r3, r4, r4 * Q4, MPI_DOUBLE, &ujk_t);
-    MPI_Type_commit(&ujk_t);
-    MPI_Type_create_resized(ujk_t, 0, sizeof(double) * r2 * r3 * Q3 * r4 * Q4, &ujk_t);
+    MPI_Type_vector(r2, r3, r3 * Q3, MPI_DOUBLE, &ujk_t);
     MPI_Type_commit(&ujk_t);
 
-    MPI_Datatype  prejk_t;
-    MPI_Type_vector(r3, r4, r4 * Q4, MPI_DOUBLE, &prejk_t);
-    MPI_Type_commit(&prejk_t);
-    MPI_Type_create_resized(prejk_t, 0, sizeof(double) * r3 * Q3 * r4 * Q4, &prejk_t);
-    MPI_Type_commit(&prejk_t);
-
-    for (int igl1 = 0; igl1 < Q1; ++igl1) {
-        for (int igl3 = 0; igl3 < Q3; ++igl3) {
-            for (int igl4 = 0; igl4 < Q4; ++igl4) {
+    for (int m = 1; m <= rit; ++m) {
+        for (int igl2 = 0; igl2 < Q2; ++igl2) {
+            for (int igl3 = 0; igl3 < Q3; ++igl3) {
                 if (left != -1) {
-                    bool leftRecvNeeded = calculationsNeeded(igl1, left, igl3, igl4,
-                                                             rit, Nx, Ny, Nz, r1, r2, r3, r4);
+                    bool leftRecvNeeded = calculationsNeeded(m, left, Nx, r1);
                     if (leftRecvNeeded) {
-                        MPI_Recv(preLeft + ((Q3 + igl3) * r3 * Q4 + igl4) * r4, r1, prejk_t,
-                                 left, tag * igl1 + igl4, MPI_COMM_WORLD, &status);
+                        MPI_Recv(preLeft + ((Q2 + igl2) * r2 * Q3 + igl3) * r3, 1, ujk_t,
+                                 left, (tag * m + igl2) * tag + igl3, MPI_COMM_WORLD, &status);
                     }
                 }
 
-//                printf("%d enters tile %d %d %d\n", rank, igl1, igl3, igl4);
+//                printf("%d enters tile %d %d %d\n", rank, m, igl2, igl3);
                 bool sendNeeded = false;
-                for (int i1 = igl1 * r1 + 1, ii1 = 1; i1 < min((igl1 + 1) * r1 + 1, rit + 1); ++i1, ++ii1) {
-                    for (int i2 = max(0, i1 - igl2 * r2); i2 < min(r2, i1 + Nx - igl2 * r2); ++i2) {
-                        for (int i3 = max(igl3 * r3, i1); i3 < min((igl3 + 1) * r3, i1 + Ny); ++i3) {
-                            for (int i4 = max(igl4 * r4, i1); i4 < min((igl4 + 1) * r4, i1 + Nz); ++i4) {
-                                sendNeeded = true;
+                for (int i1 = max(0, m - igl1 * r1); i1 < min(r1, m + Nx - igl1 * r1); ++i1) {
+                    for (int i2 = igl2 * r2; i2 < min((igl2 + 1) * r2, Ny); ++i2) {
+                        for (int i3 = igl3 * r3; i3 < min((igl3 + 1) * r3, Nz); ++i3) {
+                            sendNeeded = true;
 
-                                double uip, uim, ujp, ujm, ukp, ukm, u;
-                                int i = igl2 * r2 + i2 - i1, j = i3 - i1, k = i4 - i1;
+                            double uip, uim, ujp, ujm, ukp, ukm, u;
+                            int i = igl1 * r1 + i1 - m, j = i2, k = i3;
 
-                                if (i == 0) {
-                                    uim = A0((j + 1) * h2, (k + 1) * h3);
-                                } else if (i2 == 0) {
-                                    uim = preLeft[(ii1 * r3 * Q3 + i3) * r4 * Q4 + i4];
-                                } else {
-                                    uim = U[((ii1 * r2 + i2 - 1) * r3 * Q3 + i3) * r4 * Q4 + i4];
-                                }
-
-                                if (i == Nx - 1) {
-                                    uip = A1((j + 1) * h2, (k + 1) * h3, X);
-                                } else {
-                                    uip = U[(((ii1 - 1) * r2 + i2) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4 - 1];
-                                }
-
-                                if (j == 0) {
-                                    ujm = B0((i + 1) * h1, (k + 1) * h3);
-                                } else {
-                                    ujm = U[((ii1 * r2 + i2) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4];
-                                }
-
-                                if (j == Ny - 1) {
-                                    ujp = B1((i + 1) * h1, (k + 1) * h3, Y);
-                                } else if (i2 == 0) {
-                                    ujp = preLeft[((ii1 - 1) * r3 * Q3 + i3) * r4 * Q4 + i4 - 1];
-                                } else {
-                                    ujp = U[(((ii1 - 1) * r2 + i2 - 1) * r3 * Q3 + i3) * r4 * Q4 + i4 - 1];
-                                }
-
-                                if (k == 0) {
-                                    ukm = C0((i + 1) * h1, (j + 1) * h2);
-                                } else {
-                                    ukm = U[((ii1 * r2 + i2) * r3 * Q3 + i3) * r4 * Q4 + i4 - 1];
-                                }
-
-                                if (k == Nz - 1) {
-                                    ukp = C1((i + 1) * h1, (j + 1) * h2, Z);
-                                } else if (i2 == 0) {
-                                    ukp = preLeft[((ii1 - 1) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4];
-                                } else {
-                                    ukp = U[(((ii1 - 1) * r2 + i2 - 1) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4];
-                                }
-
-                                if (i2 == 0) {
-                                    u = preLeft[((ii1 - 1) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4 - 1];
-                                } else {
-                                    u = U[(((ii1 - 1) * r2 + i2 - 1) * r3 * Q3 + i3 - 1) * r4 * Q4 + i4 - 1];
-                                }
-
-                                U[((ii1 * r2 + i2) * r3 * Q3 + i3) * r4 * Q4 + i4] =
-                                        w * ((uip + uim) / (h1 * h1)
-                                             + (ujp + ujm) / (h2 * h2)
-                                             + (ukp + ukm) / (h3 * h3) - F((i + 1) * h1,
-                                                                           (j + 1) * h2,
-                                                                           (k + 1) * h3)) /
-                                        (2 / (h1 * h1) + 2 / (h2 * h2) + 2 / (h3 * h3)) + (1 - w) * u;
+                            if (i == 0) {
+                                uim = A0((j + 1) * h2, (k + 1) * h3);
+                            } else if (i1 == 0) {
+                                uim = preLeft[(r2 * Q2 + i2) * r3 * Q3 + i3];
+                            } else {
+                                uim = U[((r1 + i1 - 1) * r2 * Q2 + i2) * r3 * Q3 + i3];
                             }
+
+                            if (i == Nx - 1) {
+                                uip = A1((j + 1) * h2, (k + 1) * h3, X);
+                            } else {
+                                uip = U[(i1 * r2 * Q2 + i2) * r3 * Q3 + i3];
+                            }
+
+                            if (j == 0) {
+                                ujm = B0((i + 1) * h1, (k + 1) * h3);
+                            } else {
+                                ujm = U[((r1 + i1) * r2 * Q2 + i2 - 1) * r3 * Q3 + i3];
+                            }
+
+                            if (j == Ny - 1) {
+                                ujp = B1((i + 1) * h1, (k + 1) * h3, Y);
+                            } else if (i1 == 0) {
+                                ujp = preLeft[(i2 + 1) * r3 * Q3 + i3];
+                            } else {
+                                ujp = U[((i1 - 1) * r2 * Q2 + i2 + 1) * r3 * Q3 + i3];
+                            }
+
+                            if (k == 0) {
+                                ukm = C0((i + 1) * h1, (j + 1) * h2);
+                            } else {
+                                ukm = U[((r1 + i1) * r2 * Q2 + i2) * r3 * Q3 + i3 - 1];
+                            }
+
+                            if (k == Nz - 1) {
+                                ukp = C1((i + 1) * h1, (j + 1) * h2, Z);
+                            } else if (i1 == 0) {
+                                ukp = preLeft[i2 * r3 * Q3 + i3 + 1];
+                            } else {
+                                ukp = U[((i1 - 1) * r2 * Q2 + i2) * r3 * Q3 + i3 + 1];
+                            }
+
+                            if (i1 == 0) {
+                                u = preLeft[i2 * r3 * Q3 + i3];
+                            } else {
+                                u = U[((i1 - 1) * r2 * Q2 + i2) * r3 * Q3 + i3];
+                            }
+
+                            U[((r1 + i1) * r2 * Q2 + i2) * r3 * Q3 + i3] =
+                                    w * ((uip + uim) / (h1 * h1)
+                                         + (ujp + ujm) / (h2 * h2)
+                                         + (ukp + ukm) / (h3 * h3) - F((i + 1) * h1,
+                                                                       (j + 1) * h2,
+                                                                       (k + 1) * h3)) /
+                                    (2 / (h1 * h1) + 2 / (h2 * h2) + 2 / (h3 * h3)) + (1 - w) * u;
                         }
                     }
                 }
-//                printf("%d leaves tile %d %d %d\n", rank, igl1, igl3, igl4);
+//                printf("%d leaves tile %d %d %d\n", rank, m, igl2, igl3);
 
                 if (sendNeeded && right != -1) {
-                    MPI_Send(U + (((2 * r2 - 1) * Q3 + igl3) * r3 * Q4 + igl4) * r4, r1, ujk_t,
-                             right, tag * igl1 + igl4, MPI_COMM_WORLD);
+                    MPI_Send(U + (((2 * r1 - 1) * Q2 + igl2) * r2 * Q3 + igl3) * r3, 1, ujk_t,
+                             right, (tag * m + igl2) * tag + igl3, MPI_COMM_WORLD);
                 }
             }
         }
-
-        if (igl1 != Q1 - 1) {
-            memcpy(U, U + r1 * r2 * r3 * Q3 * r4 * Q4, r2 * r3 * Q3 * r4 * Q4 * sizeof(double));
-            memcpy(preLeft, preLeft + r1 * r3 * Q3 * r4 * Q4, r3 * Q3 * r4 * Q4 * sizeof(double));
-        }
+        memcpy(U, U + r1 * r2 * Q2 * r3 * Q3, r1 * r2 * Q2 * r3 * Q3 * sizeof(double));
+        memcpy(preLeft, preLeft + r2 * Q2 * r3 * Q3, r2 * Q2 * r3 * Q3 * sizeof(double));
     }
 
     double *R;
     if (rank == 0) {
-        R = (double *) malloc(sizeof(double) * r2 * Q2 * r3 * Q3 * r4 * Q4);
+        R = (double *) malloc(sizeof(double) * r1 * Q1 * r2 * Q2 * r3 * Q3);
     }
 
-    int l = rit % r1;
-    if (l == 0) {
-        l = r1;
-    }
-
-    MPI_Gather(U + l * r2 * r3 * Q3 * r4 * Q4, r2 * r3 * Q3 * r4 * Q4, MPI_DOUBLE,
-               R, r2 * r3 * Q3 * r4 * Q4, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Gather(U, r1 * r2 * Q2 * r3 * Q3, MPI_DOUBLE,
+               R, r1 * r2 * Q2 * r3 * Q3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     end = MPI_Wtime();
+
+    free(U);
+    free(preLeft);
 
     MPI_Finalize();
 
@@ -224,7 +198,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < Nx; ++i) {
             for (int j = 0; j < Ny; ++j) {
                 for (int k = 0; k < Nz; ++k) {
-                    fprintf(f, "%f ", R[((rit + i) * r3 * Q3 + rit + j) * r4 * Q4 + rit + k]);
+                    fprintf(f, "%f ", R[((rit + i) * r2 * Q2 + j) * r3 * Q3 + k]);
                 }
                 fprintf(f, "\n");
             }
