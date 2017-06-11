@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <algorithm>
 #include <math.h>
+#include <string.h>
 
 using namespace std;
-
 
 // Neodnorodnost'
 double F(double x, double y, double z) {
@@ -56,7 +56,6 @@ int main(int argc, char* argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     start = MPI_Wtime();
 
-    // Vichislenie osnovnih parametrov oblasti reshenija
     int rit = 200, tag = 31;
     double h1, h2, h3;
     h1 = h2 = h3 = atof(argv[1]);
@@ -102,7 +101,6 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    //                printf("%d enters tile %d %d %d\n", rank, m, igl2, igl3);
                     bool sendNeeded = false;
                     for (int i1 = max(0, m - igl1 * r1); i1 < min(r1, m + Nx - igl1 * r1); ++i1) {
                         for (int i2 = igl2 * r2; i2 < min((igl2 + 1) * r2, Ny); ++i2) {
@@ -170,7 +168,6 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     }
-                    //                printf("%d leaves tile %d %d %d\n", rank, m, igl2, igl3);
 
                     if (sendNeeded && right != -1) {
                         MPI_Send(U + (((2 * r1 - 1) * Q2 + igl2) * r2 * Q3 + igl3) * r3, 1, ujk_t,
