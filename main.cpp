@@ -87,9 +87,8 @@ int main(int argc, char* argv[]) {
     MPI_Datatype ujk_t;
     MPI_Type_vector(r2, r3, r3 * Q3, MPI_DOUBLE, &ujk_t);
     MPI_Type_commit(&ujk_t);
-
     for (int mgl = 0; mgl < Q0; ++mgl) {
-        if (mgl > 0) {
+        if (mgl > 0 && right != -1) {
             MPI_Recv(U, r1 * r2 * Q2 * r3 * Q3, MPI_DOUBLE, right, mgl, MPI_COMM_WORLD, &status);
         }
         for (int m = 1; m <= min(r0, rit - mgl * r0); ++m) {
@@ -182,8 +181,9 @@ int main(int argc, char* argv[]) {
             memcpy(U, U + r1 * r2 * Q2 * r3 * Q3, r1 * r2 * Q2 * r3 * Q3 * sizeof(double));
             memcpy(preLeft, preLeft + r2 * Q2 * r3 * Q3, r2 * Q2 * r3 * Q3 * sizeof(double));
         }
-        if (mgl < Q0 - 1) {
-            MPI_Send(U + r1 * r2 * Q2 * r3 * Q3, r1 * r2 * Q2 * r3 * Q3, MPI_DOUBLE, left, mgl + 1, MPI_COMM_WORLD);
+        memcpy(preLeft, U + (r1 - 1) * r2 * Q2 * r3 * Q3, r2 * Q2 * r3 * Q3 * sizeof(double));
+        if (mgl < Q0 - 1 && left != -1) {
+            MPI_Send(U, r1 * r2 * Q2 * r3 * Q3, MPI_DOUBLE, left, mgl + 1, MPI_COMM_WORLD);
         }
     }
 
@@ -203,12 +203,12 @@ int main(int argc, char* argv[]) {
 
     MPI_Finalize();
 
-    int l = rit % r0;
+    int l = rit % r0 ? : r0;
 
     if (rank == 0) {
         printf("Time: %f\n", end - start);
 
-        FILE *f = fopen("output1.txt", "w");
+        FILE *f = fopen("output.txt", "w");
         for (int i = 0; i < Nx; ++i) {
             for (int j = 0; j < Ny; ++j) {
                 for (int k = 0; k < Nz; ++k) {
