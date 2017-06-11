@@ -6,37 +6,30 @@
 
 using namespace std;
 
-// Neodnorodnost'
 double F(double x, double y, double z) {
     return 3 * exp(x + y + z);
 }
 
-// Granichnoe uslovie pri x=0
 double A0(double y, double z) {
     return exp(y + z);
 }
 
-// Granichnoe uslovie pri x=X
 double A1(double y, double z, double X) {
     return exp(X + y + z);
 }
 
-// Granichnoe uslovie pri y=0
 double B0(double x, double z) {
     return exp(x + z);
 }
 
-// Granichnoe uslovie pri y=Y
 double B1(double x, double z, double Y) {
     return exp(x + Y + z);
 }
 
-// Granichnoe uslovie pri z=0
 double C0(double x, double y) {
     return exp(x + y);
 }
 
-// Granichnoe uslovie pri z=Z
 double C1(double x, double y, double Z) {
     return exp(x + y + Z);
 }
